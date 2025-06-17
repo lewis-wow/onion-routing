@@ -15,6 +15,22 @@ export type Circuit = {
   exit: CircuitRelaySession;
 };
 
+export type Payload = {
+  sessionId: string;
+  algorithm: string;
+  encryptedPayload: string;
+};
+
+export type ExitPayload = {
+  url: string;
+  init?: RequestInit;
+};
+
+export type DecryptedPayload = {
+  nextRelay: IRelay;
+  nextPayload: Payload;
+};
+
 export class Client {
   private circuit: Circuit | undefined = undefined;
 
@@ -28,34 +44,40 @@ export class Client {
     return data ?? [];
   }
 
-  async fetch<T = unknown>(payload: string) {
+  async fetch<T = unknown>(url: string, init?: RequestInit) {
     if (!this.circuit) {
       throw new Error("Client: circuit wasn't built yet.");
     }
 
-    const exitPayload = {
+    const exitPayload: Payload = {
       sessionId: this.circuit.exit.sessionId,
-      payload: this.encrypt(payload, this.circuit.exit),
+      ...this.encrypt(
+        JSON.stringify({
+          url,
+          init,
+        } as ExitPayload),
+        this.circuit.exit,
+      ),
     };
 
-    const middlePayload = {
+    const middlePayload: Payload = {
       sessionId: this.circuit.middle.sessionId,
-      payload: this.encrypt(
+      ...this.encrypt(
         JSON.stringify({
           nextRelay: this.circuit.exit.relay,
           nextPayload: exitPayload,
-        }),
+        } as DecryptedPayload),
         this.circuit.middle,
       ),
     };
 
-    const entryPayload = {
+    const entryPayload: Payload = {
       sessionId: this.circuit.entry.sessionId,
-      payload: this.encrypt(
+      ...this.encrypt(
         JSON.stringify({
           nextRelay: this.circuit.middle.relay,
           nextPayload: middlePayload,
-        }),
+        } as DecryptedPayload),
         this.circuit.entry,
       ),
     };

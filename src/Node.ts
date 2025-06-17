@@ -34,6 +34,7 @@ export class Node implements INode {
 
     this.addressInfo = addressInfo;
     this.logger = new Logger(this.name);
+    this.logger.log('Node::run()');
   }
 
   static readonly PING_RESPONSE = 'pong';

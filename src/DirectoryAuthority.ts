@@ -16,13 +16,14 @@ export class DirectoryAuthority extends Node {
         zValidator(
           'json',
           z.object({
-            relayType: z.nativeEnum(RelayType),
+            relayType: z.string(),
             name: z.string(),
           }),
         ),
         (c) => {
           const { relayType, name } = c.req.valid('json');
-          this.relayPool.push({ relayType, name });
+          console.log({ relayType, name });
+          this.relayPool.push({ relayType: relayType as RelayType, name });
 
           return c.json({ relayType, name });
         },
@@ -35,6 +36,10 @@ export class DirectoryAuthority extends Node {
       () => this.kickDeadRelays(),
       DirectoryAuthority.PING_RELAY_INTERVAL,
     );
+  }
+
+  getRelays(): IRelay[] {
+    return this.relayPool;
   }
 
   private async kickDeadRelays(): Promise<void> {

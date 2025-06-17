@@ -32,7 +32,10 @@ export class Utils {
     };
   }
 
-  static createURLFromNodeName(nodeName: string, ...pathname: string[]) {
+  static createURLFromNodeName(
+    nodeName: string,
+    ...pathname: string[]
+  ): string {
     return `http://${nodeName}/${pathname.join('/')}`;
   }
 }

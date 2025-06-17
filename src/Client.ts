@@ -36,14 +36,6 @@ export class Client {
 
   constructor(public directoryAuthority: string) {}
 
-  async list(): Promise<IRelay[]> {
-    const { data } = await Utils.fetchData<IRelay[]>(
-      Utils.createURLFromNodeName(this.directoryAuthority, 'list'),
-    );
-
-    return data ?? [];
-  }
-
   async fetch<T = unknown>(url: string, init?: RequestInit) {
     if (!this.circuit) {
       throw new Error("Client: circuit wasn't built yet.");
@@ -97,10 +89,18 @@ export class Client {
   }
 
   async buildCircuit(): Promise<void> {
-    const relayPool = await this.list();
+    const relayPool = await this.listRelays();
     const circuit = await this._buildCircuit(relayPool);
 
     this.circuit = circuit;
+  }
+
+  private async listRelays(): Promise<IRelay[]> {
+    const { data } = await Utils.fetchData<IRelay[]>(
+      Utils.createURLFromNodeName(this.directoryAuthority, 'list'),
+    );
+
+    return data ?? [];
   }
 
   private async _buildCircuit(relays: IRelay[]): Promise<Circuit> {

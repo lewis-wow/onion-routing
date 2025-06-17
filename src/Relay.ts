@@ -9,6 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { HTTPException } from 'hono/http-exception';
 import { Node } from './Node.js';
 import { DecryptedPayload, ExitPayload, Payload } from './Client.js';
+import { Utils } from './Utils.js';
 
 export type Session = {
   sessionId: string;
@@ -128,6 +129,27 @@ export class Relay extends Node implements IRelay {
           );
         },
       );
+  }
+
+  toJSON(): IRelay {
+    return {
+      ...super.toJSON(),
+      relayType: this.relayType,
+    };
+  }
+
+  async register(directoryAuthority: string): Promise<boolean> {
+    const { response } = await Utils.fetchData<{
+      relayType: RelayType;
+      name: string;
+    }>(Utils.createURLFromNodeName(directoryAuthority, 'register'), {
+      method: 'POST',
+      body: JSON.stringify(this.toJSON()),
+    });
+
+    console.log(response);
+
+    return !!response?.ok;
   }
 
   private async forwardRoute(

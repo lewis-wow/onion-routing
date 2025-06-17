@@ -1,65 +1,156 @@
-import { createCipheriv, randomBytes } from 'node:crypto';
-import { IRelay, Relay, RelayType } from './Relay.js';
+import { createCipheriv, createDiffieHellman } from 'node:crypto';
+import { IRelay, RelayType } from './Relay.js';
 import { Utils } from './Utils.js';
 
+export type CircuitRelaySession = {
+  relay: IRelay;
+  sessionId: string;
+  sharedSecret: string;
+  iv: string;
+};
+
 export type Circuit = {
-  entryRelay: IRelay;
-  middleRelay: IRelay;
-  exitRelay: IRelay;
+  entry: CircuitRelaySession;
+  middle: CircuitRelaySession;
+  exit: CircuitRelaySession;
 };
 
 export class Client {
+  private circuit: Circuit | undefined = undefined;
+
   constructor(public directoryAuthority: string) {}
 
-  async list(): Promise<IRelay[] | null> {
-    return Utils.fetchData(this.directoryAuthority);
+  async list(): Promise<IRelay[]> {
+    const { data } = await Utils.fetchData<IRelay[]>(
+      Utils.createURLFromNodeName(this.directoryAuthority, 'list'),
+    );
+
+    return data ?? [];
   }
 
-  buildCircuit(relays: IRelay[]): Circuit {
-    const entryRelay = relays.find(
-      (relay) => relay.relayType === RelayType.GUARD_RELAY,
-    );
-    const middleRelay = relays.find(
-      (relay) => relay.relayType === RelayType.MIDDLE_RELAY,
-    );
-    const exitRelay = relays.find(
-      (relay) => relay.relayType === RelayType.EXIT_RELAY,
-    );
-
-    if (!entryRelay || !middleRelay || !exitRelay) {
-      throw new Error('Client: could not build circuit.');
+  async fetch<T = unknown>(payload: string) {
+    if (!this.circuit) {
+      throw new Error("Client: circuit wasn't built yet.");
     }
 
-    return {
-      entryRelay,
-      middleRelay,
-      exitRelay,
+    const exitPayload = {
+      sessionId: this.circuit.exit.sessionId,
+      payload: this.encrypt(payload, this.circuit.exit),
     };
-  }
 
-  async createSession(circuit: Circuit): Promise<void> {
-    await Utils.fetchData<string>(`http://${circuit.entryRelay.name}/session`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    });
+    const middlePayload = {
+      sessionId: this.circuit.middle.sessionId,
+      payload: this.encrypt(
+        JSON.stringify({
+          nextRelay: this.circuit.exit.relay,
+          nextPayload: exitPayload,
+        }),
+        this.circuit.middle,
+      ),
+    };
 
-    await Utils.fetchData<string>(
-      `http://${circuit.middleRelay.name}/session`,
+    const entryPayload = {
+      sessionId: this.circuit.entry.sessionId,
+      payload: this.encrypt(
+        JSON.stringify({
+          nextRelay: this.circuit.middle.relay,
+          nextPayload: middlePayload,
+        }),
+        this.circuit.entry,
+      ),
+    };
+
+    const { response, data } = await Utils.fetchData<T>(
+      Utils.createURLFromNodeName(this.circuit.entry.relay.name, 'route'),
       {
         method: 'POST',
-        body: JSON.stringify({}),
+        body: JSON.stringify(entryPayload),
       },
     );
 
-    await Utils.fetchData<string>(`http://${circuit.exitRelay.name}/session`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    });
+    return {
+      response,
+      data,
+    };
   }
 
-  private encrypt(message: string, aesKey: string) {
-    const iv = randomBytes(16);
-    const cipher = createCipheriv(Relay.CIPHER_ALGORITHM, aesKey, iv);
+  async buildCircuit(): Promise<void> {
+    const relayPool = await this.list();
+    const circuit = await this._buildCircuit(relayPool);
+
+    this.circuit = circuit;
+  }
+
+  private async _buildCircuit(relays: IRelay[]): Promise<Circuit> {
+    const entryRelay = this.findRelay(relays, RelayType.GUARD_RELAY);
+    const middleRelay = this.findRelay(relays, RelayType.MIDDLE_RELAY);
+    const exitRelay = this.findRelay(relays, RelayType.EXIT_RELAY);
+
+    const circuit = {
+      entry: await this.createSessionWithRelay(entryRelay),
+      middle: await this.createSessionWithRelay(middleRelay),
+      exit: await this.createSessionWithRelay(exitRelay),
+    };
+
+    return circuit;
+  }
+
+  private findRelay(relays: IRelay[], relayType: RelayType) {
+    const relay = relays.find((relay) => relay.relayType === relayType);
+
+    if (!relay) {
+      throw new Error('Client: could not build circuit.');
+    }
+
+    return relay;
+  }
+
+  private async createSessionWithRelay(relay: IRelay) {
+    const dh = createDiffieHellman(Client.DIFFIE_HELLMAN_PRIME_LENGHT);
+    const clientPublicKey = dh.generateKeys('base64');
+    const clientPrime = dh.getPrime('base64');
+    const clientGenerator = dh.getGenerator('base64');
+
+    const { data } = await Utils.fetchData<{
+      sessionId: string;
+      serverPublicKey: string;
+      iv: string;
+    }>(`http://${relay.name}/session`, {
+      method: 'POST',
+      body: JSON.stringify({
+        clientPublicKey,
+        clientPrime,
+        clientGenerator,
+      }),
+    });
+
+    if (!data) {
+      throw new Error('Client: cannot create session with relay.');
+    }
+
+    const sharedSecret = dh.computeSecret(
+      Buffer.from(data.serverPublicKey, 'base64'),
+      null,
+      'base64',
+    );
+
+    return {
+      sessionId: data.sessionId,
+      iv: data.iv,
+      sharedSecret,
+      relay,
+    };
+  }
+
+  private encrypt(
+    message: string,
+    encryptOpts: { sharedSecret: string; iv: string },
+  ) {
+    const cipher = createCipheriv(
+      Client.CIPHER_ALGORITHM,
+      encryptOpts.sharedSecret,
+      encryptOpts.iv,
+    );
 
     const encrypted = Buffer.concat([
       cipher.update(message, 'utf8'),
@@ -67,8 +158,11 @@ export class Client {
     ]);
 
     return {
-      iv: iv.toString('hex'),
-      encryptedData: encrypted.toString('hex'),
+      encryptedPayload: encrypted.toString('hex'),
+      algorithm: Client.CIPHER_ALGORITHM,
     };
   }
+
+  static readonly DIFFIE_HELLMAN_PRIME_LENGHT = 2048;
+  static readonly CIPHER_ALGORITHM = 'aes-256-cbc';
 }

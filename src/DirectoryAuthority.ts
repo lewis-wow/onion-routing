@@ -1,10 +1,11 @@
 import z from 'zod';
-import { NetNode } from './NetNode.js';
+import { Node } from './Node.js';
 import { Utils } from './Utils.js';
 import { zValidator } from '@hono/zod-validator';
+import { IRelay, RelayType } from './Relay.js';
 
-export class DirectoryAuthority extends NetNode {
-  relayPool: string[] = [];
+export class DirectoryAuthority extends Node {
+  relayPool: IRelay[] = [];
 
   constructor() {
     super();
@@ -15,14 +16,15 @@ export class DirectoryAuthority extends NetNode {
         zValidator(
           'json',
           z.object({
-            relayName: z.string(),
+            relayType: z.nativeEnum(RelayType),
+            name: z.string(),
           }),
         ),
         (c) => {
-          const { relayName } = c.req.valid('json');
-          this.relayPool.push(relayName);
+          const { relayType, name } = c.req.valid('json');
+          this.relayPool.push({ relayType, name });
 
-          return c.text('OK');
+          return c.json({ relayType, name });
         },
       )
       .get('/list', (c) =>
@@ -37,13 +39,16 @@ export class DirectoryAuthority extends NetNode {
 
   private async kickDeadRelays(): Promise<void> {
     this.relayPool.forEach(async (relayName, index) => {
-      const data = await Utils.fetchData<string>(`http://${relayName}/ping`, {
-        signal: AbortSignal.timeout(
-          DirectoryAuthority.PING_RELAY_REQUEST_TIMEOUT,
-        ),
-      });
+      const { data } = await Utils.fetchData<string>(
+        `http://${relayName}/ping`,
+        {
+          signal: AbortSignal.timeout(
+            DirectoryAuthority.PING_RELAY_REQUEST_TIMEOUT,
+          ),
+        },
+      );
 
-      if (data === null || data !== NetNode.PING_RESPONSE) {
+      if (data === null || data !== Node.PING_RESPONSE) {
         this.relayPool.splice(index, 1);
       }
     });

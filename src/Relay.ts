@@ -1,13 +1,17 @@
 import { zValidator } from '@hono/zod-validator';
-import { createDecipheriv, createDiffieHellman, createHash } from 'node:crypto';
+import {
+  createDecipheriv,
+  createDiffieHellman,
+  randomBytes,
+} from 'node:crypto';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { HTTPException } from 'hono/http-exception';
-import { NetNode } from './NetNode.js';
+import { Node } from './Node.js';
 
 export type Session = {
   sessionId: string;
-  aesKey: string;
+  sharedSecret: string;
   iv: string;
 };
 
@@ -28,7 +32,7 @@ type ExitNodePayload = {
 
 type NodePayload = {
   relayId: string;
-  remainingPayload: string;
+  nextPayload: string;
 };
 
 /*
@@ -73,7 +77,7 @@ export interface IRelay {
   name: string;
 }
 
-export class Relay extends NetNode implements IRelay {
+export class Relay extends Node implements IRelay {
   constructor(public relayType: RelayType) {
     super();
 
@@ -83,28 +87,40 @@ export class Relay extends NetNode implements IRelay {
         zValidator(
           'json',
           z.object({
-            primeLength: z.number(),
-            generator: z.number(),
-            iv: z.string(),
+            clientPublicKey: z.string(),
+            clientPrime: z.string(),
+            clientGenerator: z.string(),
           }),
         ),
         async (c) => {
-          const { primeLength, generator, iv } = c.req.valid('json');
+          const { clientPublicKey, clientPrime, clientGenerator } =
+            c.req.valid('json');
 
-          const dh = createDiffieHellman(primeLength, generator);
+          const dh = createDiffieHellman(
+            Buffer.from(clientPrime, 'base64'),
+            Buffer.from(clientGenerator, 'base64'),
+          );
 
-          const sessionKey = dh.generateKeys();
-          const aesKey = createHash('sha256').update(sessionKey).digest('hex');
+          const sharedSecret = dh.computeSecret(
+            Buffer.from(clientPublicKey, 'base64'),
+            null,
+            'base64',
+          );
+
+          const serverPublicKey = dh.generateKeys('base64');
+          const iv = randomBytes(16).toString('base64');
           const sessionId = uuidv4();
 
           sessions.push({
             sessionId,
-            aesKey,
+            sharedSecret,
             iv,
           });
 
           return c.json({
             sessionId,
+            serverPublicKey,
+            iv,
           });
         },
       )
@@ -130,7 +146,7 @@ export class Relay extends NetNode implements IRelay {
 
           const decryptedPayload = this.decrypt(
             payload,
-            session.aesKey,
+            session.sharedSecret,
             session.iv,
           );
 
@@ -156,7 +172,7 @@ export class Relay extends NetNode implements IRelay {
   private async forwardRoute(nodePayload: NodePayload): Promise<Response> {
     const response = await fetch(`http://${nodePayload.relayId}/route`, {
       body: JSON.stringify({
-        payload: nodePayload.remainingPayload,
+        payload: nodePayload.nextPayload,
       }),
     });
 

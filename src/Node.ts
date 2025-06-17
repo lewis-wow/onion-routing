@@ -1,13 +1,16 @@
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { AddressInfo } from 'node:net';
+import { Logger } from './Logger.js';
 
-export interface INetNode {
+export interface INode {
   name: string;
 }
 
-export class NetNode implements INetNode {
-  protected app = new Hono().get('/ping', (c) => c.text(NetNode.PING_RESPONSE));
+export class Node implements INode {
+  protected logger?: Logger;
+  protected app = new Hono().get('/ping', (c) => c.text(Node.PING_RESPONSE));
+
   protected addressInfo: AddressInfo | undefined = undefined;
 
   public get name(): string {
@@ -30,6 +33,7 @@ export class NetNode implements INetNode {
     );
 
     this.addressInfo = addressInfo;
+    this.logger = new Logger(this.name);
   }
 
   static readonly PING_RESPONSE = 'pong';

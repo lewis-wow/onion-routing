@@ -2,20 +2,37 @@ export class Utils {
   static async fetchData<T = unknown>(
     url: string,
     init?: RequestInit,
-  ): Promise<T | null> {
+  ): Promise<{
+    response: Response | null;
+    data: T | null;
+  }> {
     let response: Response;
     try {
       response = await fetch(url, init);
     } catch {
-      return null;
+      return {
+        response: null,
+        data: null,
+      };
     }
 
     const body = await response.text();
 
+    let data: T;
+
     try {
-      return JSON.parse(body) as T;
+      data = JSON.parse(body) as T;
     } catch {
-      return body as T;
+      data = body as T;
     }
+
+    return {
+      response,
+      data,
+    };
+  }
+
+  static createURLFromNodeName(nodeName: string, ...pathname: string[]) {
+    return `http://${nodeName}/${pathname.join('/')}`;
   }
 }
